@@ -1,47 +1,77 @@
-    - name: CrowdStrike Image Scan
-      id: fcs
-      uses: crowdstrike/fcs-action@v3.0.0
-      with:
-        falcon_client_id: ${{ vars.FALCON_CLIENT_ID }}
-        falcon_region: ${{ env.FALCON_REGION }}
-        scan_type: image
-        image: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-        minimum_severity: high
-        upload_results: true
-        report_formats: sarif
-        output_path: ./scan-results.sarif
-      env:
-        FALCON_CLIENT_SECRET: ${{ secrets.FALCON_CLIENT_SECRET }}
-        FCS_VERBOSE: 'true'
+name: CrowdStrike Image Assessment
 
-    - name: Check SARIF for vulnerabilities
-      id: sarif-check
-      if: always()
-      run: |
-        if [ ! -f ./scan-results.sarif ]; then
-          echo "has_results=false" >> "$GITHUB_OUTPUT"
-          echo "No SARIF file found. Skipping upload."
-          exit 0
-        fi
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
-        RESULT_COUNT=$(jq '[.runs[].results | length] | add // 0' ./scan-results.sarif)
-        echo "Vulnerability count in SARIF: $RESULT_COUNT"
+env:
+  IMAGE_NAME: myapp
+  IMAGE_TAG: ${{ github.sha }}
+  FALCON_REGION: us-2
+  DOCKERFILE_PATH: .
 
-        if [ "$RESULT_COUNT" -gt 0 ]; then
-          echo "has_results=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "has_results=false" >> "$GITHUB_OUTPUT"
-          echo "No vulnerabilities found. Skipping SARIF upload."
-        fi
+jobs:
+  build-and-assess:
+    name: Build & Scan Image
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
 
-    - name: Upload SARIF to GitHub Security
-      if: always() && steps.sarif-check.outputs.has_results == 'true'
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: ./scan-results.sarif
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Fail on High or Critical vulnerabilities
-      if: steps.fcs.outputs.exit-code != 0
-      run: |
-        echo "Image scan found HIGH or CRITICAL severity vulnerabilities. Blocking push."
-        exit 1
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} ${{ env.DOCKERFILE_PATH }}
+
+      - name: CrowdStrike Image Scan
+        id: fcs
+        uses: crowdstrike/fcs-action@v3.0.0
+        with:
+          falcon_client_id: ${{ vars.FALCON_CLIENT_ID }}
+          falcon_region: ${{ env.FALCON_REGION }}
+          scan_type: image
+          image: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          minimum_severity: high
+          upload_results: true
+          report_formats: sarif
+          output_path: ./scan-results.sarif
+        env:
+          FALCON_CLIENT_SECRET: ${{ secrets.FALCON_CLIENT_SECRET }}
+          FCS_VERBOSE: 'true'
+
+      - name: Check SARIF for vulnerabilities
+        id: sarif-check
+        if: always()
+        run: |
+          if [ ! -f ./scan-results.sarif ]; then
+            echo "has_results=false" >> "$GITHUB_OUTPUT"
+            echo "No SARIF file found. Skipping upload."
+            exit 0
+          fi
+
+          RESULT_COUNT=$(jq '[.runs[].results | length] | add // 0' ./scan-results.sarif)
+          echo "Vulnerability count in SARIF: $RESULT_COUNT"
+
+          if [ "$RESULT_COUNT" -gt 0 ]; then
+            echo "has_results=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_results=false" >> "$GITHUB_OUTPUT"
+            echo "No vulnerabilities found. Skipping SARIF upload."
+          fi
+
+      - name: Upload SARIF to GitHub Security
+        if: always() && steps.sarif-check.outputs.has_results == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ./scan-results.sarif
+
+      - name: Fail on High or Critical vulnerabilities
+        if: steps.fcs.outputs.exit-code != 0
+        run: |
+          echo "Image scan found HIGH or CRITICAL severity vulnerabilities. Blocking push."
+          exit 1
