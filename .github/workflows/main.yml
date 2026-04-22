@@ -14,7 +14,6 @@
         FALCON_CLIENT_SECRET: ${{ secrets.FALCON_CLIENT_SECRET }}
         FCS_VERBOSE: 'true'
 
-    # ── NEW: Check if any vulnerabilities exist in the SARIF ──
     - name: Check SARIF for vulnerabilities
       id: sarif-check
       if: always()
@@ -25,7 +24,6 @@
           exit 0
         fi
 
-        # Count the number of results across all runs
         RESULT_COUNT=$(jq '[.runs[].results | length] | add // 0' ./scan-results.sarif)
         echo "Vulnerability count in SARIF: $RESULT_COUNT"
 
